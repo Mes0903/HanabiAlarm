@@ -8,13 +8,16 @@
 #include <vulkan/vulkan.h>
 #include <windows.h>
 
+#include "controllers/BoardController.h"
+#include "views/BoardView.h"
+
 #ifdef _DEBUG
 #define APP_USE_VULKAN_DEBUG_REPORT
 #endif
 
 class Application {
 public:
-	Application()	 = default;
+	Application();
 	~Application() = default;
 
 	int run();
@@ -73,4 +76,8 @@ private:
 	// ── State ──────────────────────────────────────────────────────────────
 	bool running_				= true;
 	bool windowVisible_ = true;
+
+	// ── Board (controller must be declared before view) ─────────────────────
+	moka::ctrl::BoardController boardCtrl_;
+	moka::views::BoardView      boardView_;
 };

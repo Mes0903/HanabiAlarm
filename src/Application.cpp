@@ -3,6 +3,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+// The WndProcHandler declaration is intentionally gated behind #if 0 in imgui_impl_win32.h
+// (to avoid forcing a <windows.h> dependency on the header). Forward-declare it here per the
+// comment in that file.
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 namespace {
 constexpr UINT WM_TRAYICON				 = WM_APP + 1; // Custom message: tray icon mouse event callback
@@ -14,6 +19,9 @@ constexpr const wchar_t *WND_CLASS = L"MokaBoardWndClass";
 constexpr int INIT_W							 = 1280;
 constexpr int INIT_H							 = 800;
 } // namespace
+
+// ─── Constructor ─────────────────────────────────────────────────────────────
+Application::Application() : boardView_(boardCtrl_) {}
 
 // ─── Static WndProc dispatch ─────────────────────────────────────────────────
 Application *g_App = nullptr;
@@ -32,6 +40,7 @@ int Application::run()
 	initVulkan_();
 	initImGui_();
 	initTray_();
+	boardCtrl_.load();
 	mainLoop_();
 	cleanup_();
 	return 0;
@@ -291,8 +300,8 @@ void Application::mainLoop_()
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
 
-		// ── UI content (Phase 1 placeholder) ────────────────────────────
-		ImGui::ShowDemoWindow();
+		// ── UI content ──────────────────────────────────────────────────
+		boardView_.render();
 
 		// ── Render ───────────────────────────────────────────────────────
 		ImGui::Render();
