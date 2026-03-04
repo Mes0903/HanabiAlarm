@@ -38,13 +38,20 @@ void AlarmView::render()
 	// Push buttons to the far right
 	const float avail		 = ImGui::GetContentRegionAvail().x;
 	const float btnWidth = 100.0f;
-	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - btnWidth * 2.0f - 8.0f);
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - btnWidth * 3.0f - 8.0f * 2.0f);
 
 	if (ImGui::Button("Settings", ImVec2(btnWidth, 0)))
 		showSettingsDialog_ = true;
 	ImGui::SameLine(0, 8);
 	if (ImGui::Button("+ Add Alarm", ImVec2(btnWidth, 0)))
 		openAddDialog_();
+	ImGui::SameLine(0, 8);
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.18f, 0.18f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+	if (ImGui::Button("Clean All", ImVec2(btnWidth, 0)))
+		showCleanConfirm_ = true;
+	ImGui::PopStyleColor(3);
 
 	ImGui::Separator();
 
@@ -57,6 +64,7 @@ void AlarmView::render()
 	renderEditDialog_();
 	renderSettingsDialog_();
 	renderDeleteConfirm_();
+	renderCleanConfirm_();
 	renderCloseHintDialog_();
 }
 
@@ -97,9 +105,10 @@ void AlarmView::renderAlarmList_()
 // ─── renderAlarmItem_ ────────────────────────────────────────────────────────
 void AlarmView::renderAlarmItem_(const model::AlarmModel &alarm)
 {
-	// Row tall enough for 1.8× time text + one line of sub-text
+	// Row tall enough for 1.8× time text + two sub-lines (days + url) + padding
 	const float bigTextH = ImGui::GetFontSize() * 1.8f;
-	const float rowH		 = bigTextH + ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().FramePadding.y * 4.0f;
+	const float lineH		 = ImGui::GetTextLineHeightWithSpacing();
+	const float rowH		 = bigTextH + lineH * 2.0f + ImGui::GetStyle().FramePadding.y * 4.0f;
 	ImGui::TableNextRow(0, rowH);
 
 	// ── Time column ────────────────────────────────────────────────────────
@@ -129,25 +138,39 @@ void AlarmView::renderAlarmItem_(const model::AlarmModel &alarm)
 	else
 		ImGui::TextDisabled("(no label)");
 
-	// Repeat days + URL preview on a second line
-	std::string info;
-	for (int d : alarm.repeat_days) {
+	// Repeat days: second line
+	std::string days;
+	for (int d : alarm.repeat_days)
 		if (d >= 0 && d < 7) {
-			if (!info.empty())
-				info += ' ';
-			info += kDayAbbr[d];
+			if (!days.empty())
+				days += ' ';
+			days += kDayAbbr[d];
+		}
+	ImGui::TextDisabled("%s", days.c_str());
+
+	// URL: third line, dynamically truncated to fit the available column width
+	if (!alarm.youtube_url.empty()) {
+		const std::string &url = alarm.youtube_url;
+		const float availW		 = ImGui::GetContentRegionAvail().x;
+		const float fullW			 = ImGui::CalcTextSize(url.data(), url.data() + url.size()).x;
+
+		if (fullW <= availW) {
+			ImGui::TextDisabled("%s", url.c_str());
+		}
+		else {
+			// Binary search: largest byte prefix whose rendered width fits within (availW - "...").
+			const float targetW = availW - ImGui::CalcTextSize("...").x;
+			size_t lo = 0, hi = url.size();
+			while (lo < hi) {
+				const size_t mid = lo + (hi - lo + 1) / 2;
+				if (ImGui::CalcTextSize(url.data(), url.data() + mid).x <= targetW)
+					lo = mid;
+				else
+					hi = mid - 1;
+			}
+			ImGui::TextDisabled("%s...", url.substr(0, lo).c_str());
 		}
 	}
-	if (!alarm.youtube_url.empty()) {
-		if (!info.empty())
-			info += "  ·  ";
-		std::string url = alarm.youtube_url;
-		if (url.size() > 34)
-			url = url.substr(0, 34) + "...";
-		info += url;
-	}
-	if (!info.empty())
-		ImGui::TextDisabled("%s", info.c_str());
 
 	// ── Buttons column ─────────────────────────────────────────────────────
 	ImGui::TableSetColumnIndex(2);
@@ -195,10 +218,10 @@ void AlarmView::renderEditDialog_()
 	}
 
 	const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-	ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(440, 270), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(440, 270), ImGuiCond_FirstUseEver);
 
-	if (!ImGui::BeginPopupModal(popupName, &open, ImGuiWindowFlags_NoSavedSettings))
+	if (!ImGui::BeginPopupModal(popupName, &open, ImGuiWindowFlags_None))
 		return;
 
 	ImGui::Spacing();
@@ -258,6 +281,14 @@ void AlarmView::renderEditDialog_()
 	ImGui::SetNextItemWidth(-1.0f);
 	ImGui::InputText("##url", editUrl_, sizeof(editUrl_));
 
+	// ID (read-only, edit mode only)
+	if (!isAddMode_) {
+		ImGui::Spacing();
+		ImGui::Text("ID");
+		ImGui::SameLine(kLabelW);
+		ImGui::TextDisabled("%s", editId_.c_str());
+	}
+
 	// Error message
 	if (!editError_.empty()) {
 		ImGui::Spacing();
@@ -302,10 +333,10 @@ void AlarmView::renderSettingsDialog_()
 	}
 
 	const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-	ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_FirstUseEver);
 
-	if (!ImGui::BeginPopupModal("Settings##Dlg", &open, ImGuiWindowFlags_NoSavedSettings))
+	if (!ImGui::BeginPopupModal("Settings##Dlg", &open, ImGuiWindowFlags_None))
 		return;
 
 	ImGui::Spacing();
@@ -358,7 +389,7 @@ void AlarmView::renderSettingsDialog_()
 	ImGui::SameLine(0, 8);
 	ImGui::Text("%d x %d", curS.window_width, curS.window_height);
 	if (ImGui::Button("Reset window size##wnd")) {
-		// Immediately resize and save — no need to wait for Save.
+		// Immediately resize and save, no need to wait for Save.
 		auto s					= ctrl_.settings();
 		s.window_width	= 1280;
 		s.window_height = 800;
@@ -386,6 +417,45 @@ void AlarmView::renderSettingsDialog_()
 		s.close_to_tray					 = pendingCloseTray_;
 		s.suppress_minimize_hint = !pendingShowHint_;
 		ctrl_.saveSettings(std::move(s));
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::PopStyleColor(2);
+
+	ImGui::EndPopup();
+}
+
+// ─── renderCleanConfirm_ ─────────────────────────────────────────────────────
+void AlarmView::renderCleanConfirm_()
+{
+	if (showCleanConfirm_) {
+		ImGui::OpenPopup("##CleanConfirm");
+		showCleanConfirm_ = false;
+	}
+
+	const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_Appearing);
+
+	if (!ImGui::BeginPopupModal(
+					"##CleanConfirm", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+		return;
+
+	ImGui::Text("Clean All Alarms?");
+	ImGui::Spacing();
+	ImGui::TextWrapped("This will delete all alarms from this app and remove every task inside the \\Alarm\\ folder in "
+										 "Windows Task Scheduler, including any tasks not shown here due to data corruption.");
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	constexpr float kBw = 90.0f;
+	if (ImGui::Button("Cancel", ImVec2(kBw, 0)))
+		ImGui::CloseCurrentPopup();
+	ImGui::SameLine(0, 8);
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.18f, 0.18f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
+	if (ImGui::Button("Clean All", ImVec2(kBw, 0))) {
+		ctrl_.cleanAll();
 		ImGui::CloseCurrentPopup();
 	}
 	ImGui::PopStyleColor(2);
@@ -501,7 +571,7 @@ void AlarmView::saveEditDialog_()
 		alarm.id = editId_;
 		// Preserve the existing enabled state
 		const auto &existing = ctrl_.alarms();
-		auto it = std::ranges::find(existing, editId_, &alarm::model::AlarmModel::id);
+		auto it							 = std::ranges::find(existing, editId_, &alarm::model::AlarmModel::id);
 		if (it != existing.end())
 			alarm.enabled = it->enabled;
 		ctrl_.updateAlarm(alarm);

@@ -17,6 +17,7 @@ public:
 	void updateAlarm(const model::AlarmModel &alarm);
 	void deleteAlarm(const std::string &id);
 	void setEnabled(const std::string &id, bool enabled);
+	void cleanAll();
 
 	[[nodiscard]] const model::SettingsModel &settings() const noexcept;
 	void saveSettings(model::SettingsModel s);

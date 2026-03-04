@@ -43,6 +43,9 @@ private:
 	std::string pendingDeleteId_;
 	bool showDeleteConfirm_ = false;
 
+	// ── Clean All confirm ─────────────────────────────────────────────────────
+	bool showCleanConfirm_ = false;
+
 	// ── Close hint dialog ─────────────────────────────────────────────────────
 	bool showCloseHintDialog_		 = false;
 	bool closeHintDontShow_			 = false;
@@ -58,6 +61,7 @@ private:
 	void renderEditDialog_();
 	void renderSettingsDialog_();
 	void renderDeleteConfirm_();
+	void renderCleanConfirm_();
 	void renderCloseHintDialog_();
 
 	void openAddDialog_();

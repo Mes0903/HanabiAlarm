@@ -1,7 +1,9 @@
 #include "controllers/AlarmController.h"
 #include "controllers/PersistenceService.h"
+#include "controllers/SchedulerService.h"
 #include <algorithm>
 #include <iomanip>
+#include <iostream>
 #include <random>
 #include <sstream>
 
@@ -22,6 +24,8 @@ const std::vector<model::AlarmModel> &AlarmController::alarms() const noexcept {
 void AlarmController::addAlarm(model::AlarmModel alarm)
 {
 	alarm.id = generateId_();
+	if (auto res = SchedulerService::syncAlarm(alarm, settings_.chrome_path); !res)
+		std::cerr << "[SchedulerService] addAlarm: " << res.error() << '\n';
 	alarms_.push_back(std::move(alarm));
 	sortAlarms_();
 	persist_();
@@ -33,6 +37,8 @@ void AlarmController::updateAlarm(const model::AlarmModel &alarm)
 	auto it = std::ranges::find(alarms_, alarm.id, &model::AlarmModel::id);
 	if (it != alarms_.end()) {
 		*it = alarm;
+		if (auto res = SchedulerService::syncAlarm(alarm, settings_.chrome_path); !res)
+			std::cerr << "[SchedulerService] updateAlarm: " << res.error() << '\n';
 		sortAlarms_();
 		persist_();
 	}
@@ -41,6 +47,11 @@ void AlarmController::updateAlarm(const model::AlarmModel &alarm)
 // ─── deleteAlarm ──────────────────────────────────────────────────────────────
 void AlarmController::deleteAlarm(const std::string &id)
 {
+	auto it = std::ranges::find(alarms_, id, &model::AlarmModel::id);
+	if (it != alarms_.end()) {
+		if (auto res = SchedulerService::deleteTask(*it); !res)
+			std::cerr << "[SchedulerService] deleteAlarm: " << res.error() << '\n';
+	}
 	std::erase_if(alarms_, [&](const auto &a) { return a.id == id; });
 	persist_();
 }
@@ -51,8 +62,19 @@ void AlarmController::setEnabled(const std::string &id, bool enabled)
 	auto it = std::ranges::find(alarms_, id, &model::AlarmModel::id);
 	if (it != alarms_.end()) {
 		it->enabled = enabled;
+		if (auto res = SchedulerService::syncAlarm(*it, settings_.chrome_path); !res)
+			std::cerr << "[SchedulerService] setEnabled: " << res.error() << '\n';
 		persist_();
 	}
+}
+
+// ─── cleanAll ─────────────────────────────────────────────────────────────────
+void AlarmController::cleanAll()
+{
+	if (auto res = SchedulerService::cleanAllTasks(); !res)
+		std::cerr << "[SchedulerService] cleanAll: " << res.error() << '\n';
+	alarms_.clear();
+	persist_();
 }
 
 // ─── settings ─────────────────────────────────────────────────────────────────
