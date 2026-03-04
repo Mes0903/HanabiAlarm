@@ -12,8 +12,8 @@ constexpr UINT WM_TRAYICON				 = WM_APP + 1; // Custom message: tray icon mouse 
 constexpr UINT IDM_SHOW						 = 1001;			 // Context menu: show / hide main window
 constexpr UINT IDM_EXIT						 = 1002;			 // Context menu: exit application
 constexpr UINT TRAY_UID						 = 1;					 // Icon ID passed to Shell_NotifyIcon
-constexpr const wchar_t *APP_NAME	 = L"MokaAlarm";
-constexpr const wchar_t *WND_CLASS = L"MokaAlarmWndClass";
+constexpr const wchar_t *APP_NAME	 = L"HanabiAlarm";
+constexpr const wchar_t *WND_CLASS = L"HanabiAlarmWndClass";
 constexpr int INIT_W							 = 1280;
 constexpr int INIT_H							 = 800;
 } // namespace

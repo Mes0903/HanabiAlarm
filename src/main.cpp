@@ -12,7 +12,7 @@ int main()
 	HANDLE mutex = ::CreateMutexW(nullptr, TRUE, L"AlarmAppSingleInstanceMutex");
 	if (::GetLastError() == ERROR_ALREADY_EXISTS) {
 		// Another instance is running: find its window, restore and focus it.
-		HWND existing = ::FindWindowW(L"MokaAlarmWndClass", nullptr);
+		HWND existing = ::FindWindowW(L"HanabiAlarmWndClass", nullptr);
 		if (existing) {
 			::ShowWindow(existing, SW_SHOW);
 			::SetForegroundWindow(existing);

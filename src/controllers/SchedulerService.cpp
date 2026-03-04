@@ -102,7 +102,7 @@ std::wstring taskNameFor(const std::string &label, const std::string &id)
 	return toWide(prefix + " " + id);
 }
 
-// Opens the \Alarm task folder, creating it if it does not exist.
+// Opens the \HanabiAlarm task folder, creating it if it does not exist.
 HRESULT getOrCreateAlarmFolder(ITaskService *svc, ITaskFolder **alarmFolder)
 {
 	ComPtr<ITaskFolder> root;
@@ -110,12 +110,12 @@ HRESULT getOrCreateAlarmFolder(ITaskService *svc, ITaskFolder **alarmFolder)
 	if (FAILED(hr))
 		return hr;
 
-	hr = root->GetFolder(BStr(L"MokaAlarm"), alarmFolder);
+	hr = root->GetFolder(BStr(L"HanabiAlarm"), alarmFolder);
 	if (SUCCEEDED(hr))
 		return S_OK;
 
 	VARIANT vEmpty = emptyVar();
-	return root->CreateFolder(BStr(L"MokaAlarm"), vEmpty, alarmFolder);
+	return root->CreateFolder(BStr(L"HanabiAlarm"), vEmpty, alarmFolder);
 }
 
 } // namespace
@@ -247,7 +247,7 @@ std::expected<void, std::string> SchedulerService::deleteTask(const model::Alarm
 		return std::unexpected(hrErr("GetFolder(root)", hr));
 
 	ComPtr<ITaskFolder> folder;
-	hr = root->GetFolder(BStr(L"MokaAlarm"), &folder);
+	hr = root->GetFolder(BStr(L"HanabiAlarm"), &folder);
 	if (FAILED(hr))
 		return {}; // Folder (and task) doesn't exist, nothing to do.
 
@@ -282,7 +282,7 @@ std::expected<void, std::string> SchedulerService::cleanAllTasks()
 		return std::unexpected(hrErr("GetFolder(root)", hr));
 
 	ComPtr<ITaskFolder> folder;
-	hr = root->GetFolder(BStr(L"MokaAlarm"), &folder);
+	hr = root->GetFolder(BStr(L"HanabiAlarm"), &folder);
 	if (FAILED(hr))
 		return {}; // Folder doesn't exist, nothing to do.
 
