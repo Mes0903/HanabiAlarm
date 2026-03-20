@@ -3,6 +3,7 @@
 #include "models/AlarmModel.h"
 #include <expected>
 #include <string>
+#include <vector>
 
 namespace alarm::controller {
 
@@ -23,6 +24,10 @@ public:
 	// Deletes ALL tasks inside the \HanabiAlarm\ folder (including any orphans not in alarms.json).
 	// Tasks outside \HanabiAlarm\ are never touched.
 	[[nodiscard]] static std::expected<void, std::string> cleanAllTasks();
+
+	// Reads all tasks inside \HanabiAlarm\ and reconstructs AlarmModel objects from them.
+	// Used on startup to recover alarms that exist in the scheduler but not in alarms.json.
+	[[nodiscard]] static std::expected<std::vector<model::AlarmModel>, std::string> loadAlarmsFromScheduler();
 };
 
 } // namespace alarm::controller

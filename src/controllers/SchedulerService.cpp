@@ -62,6 +62,7 @@ VARIANT emptyVar()
 	return v;
 }
 
+// string → wstring (required by Task Scheduler COM APIs which only accept BSTR/wchar_t).
 std::wstring toWide(const std::string &s)
 {
 	if (s.empty())
@@ -70,6 +71,17 @@ std::wstring toWide(const std::string &s)
 	std::wstring ws(len, L'\0');
 	MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), ws.data(), len);
 	return ws;
+}
+
+// wstring → string (used when reading strings back out of Task Scheduler COM APIs).
+std::string toNarrow(const std::wstring &ws)
+{
+	if (ws.empty())
+		return {};
+	int len = WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr);
+	std::string s(len, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), s.data(), len, nullptr, nullptr);
+	return s;
 }
 
 // Builds an ISO 8601 start-boundary string. A fixed past date makes the trigger immediately active.
@@ -322,6 +334,144 @@ std::expected<void, std::string> SchedulerService::cleanAllTasks()
 	}
 
 	return {};
+}
+
+// ─── loadAlarmsFromScheduler ──────────────────────────────────────────────────
+std::expected<std::vector<model::AlarmModel>, std::string> SchedulerService::loadAlarmsFromScheduler()
+{
+	CoGuard co;
+	if (!co.ok())
+		return std::unexpected(hrErr("CoInitializeEx", co.hr_));
+
+	ComPtr<ITaskService> svc;
+	HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&svc));
+	if (FAILED(hr))
+		return std::unexpected(hrErr("CoCreateInstance(TaskScheduler)", hr));
+
+	VARIANT v = emptyVar();
+	hr				= svc->Connect(v, v, v, v);
+	if (FAILED(hr))
+		return std::unexpected(hrErr("ITaskService::Connect", hr));
+
+	ComPtr<ITaskFolder> root;
+	hr = svc->GetFolder(BStr(L"\\"), &root);
+	if (FAILED(hr))
+		return std::unexpected(hrErr("GetFolder(root)", hr));
+
+	ComPtr<ITaskFolder> folder;
+	hr = root->GetFolder(BStr(L"HanabiAlarm"), &folder);
+	if (FAILED(hr))
+		return std::vector<model::AlarmModel>{}; // Folder doesn't exist yet.
+
+	ComPtr<IRegisteredTaskCollection> tasks;
+	hr = folder->GetTasks(TASK_ENUM_HIDDEN, &tasks);
+	if (FAILED(hr))
+		return std::unexpected(hrErr("ITaskFolder::GetTasks", hr));
+
+	LONG count = 0;
+	hr				 = tasks->get_Count(&count);
+	if (FAILED(hr))
+		return std::unexpected(hrErr("get_Count", hr));
+
+	std::vector<model::AlarmModel> result;
+	for (LONG i = 1; i <= count; ++i) {
+		VARIANT idx;
+		VariantInit(&idx);
+		idx.vt	 = VT_I4;
+		idx.lVal = i;
+		ComPtr<IRegisteredTask> task;
+		if (FAILED(tasks->get_Item(idx, &task)))
+			continue;
+
+		// ── Parse task name → label + id ──────────────────────────────────────
+		// Task name format: "<label> <uuid>" or "unnamed <uuid>"
+		// UUID is always 36 chars: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+		BSTR bName = nullptr;
+		if (FAILED(task->get_Name(&bName)) || !bName)
+			continue;
+		std::wstring wName(bName);
+		SysFreeString(bName);
+
+		constexpr size_t kUuidLen = 36;
+		if (wName.size() < kUuidLen + 1 || wName[wName.size() - kUuidLen - 1] != L' ')
+			continue; // Not our naming format.
+		std::wstring wId = wName.substr(wName.size() - kUuidLen);
+		if (wId[8] != L'-' || wId[13] != L'-' || wId[18] != L'-' || wId[23] != L'-')
+			continue; // UUID sanity check failed.
+		std::wstring wLabel = wName.substr(0, wName.size() - kUuidLen - 1);
+
+		model::AlarmModel alarm;
+		alarm.id		= toNarrow(wId);
+		alarm.label = (wLabel == L"unnamed") ? "" : toNarrow(wLabel);
+
+		// ── Get task definition ────────────────────────────────────────────────
+		ComPtr<ITaskDefinition> def;
+		if (FAILED(task->get_Definition(&def)))
+			continue;
+
+		// Enabled state
+		ComPtr<ITaskSettings> taskSettings;
+		if (SUCCEEDED(def->get_Settings(&taskSettings))) {
+			VARIANT_BOOL en = VARIANT_TRUE;
+			taskSettings->get_Enabled(&en);
+			alarm.enabled = (en == VARIANT_TRUE);
+		}
+
+		// Trigger → hour, minute, repeat_days
+		ComPtr<ITriggerCollection> triggers;
+		if (SUCCEEDED(def->get_Triggers(&triggers))) {
+			LONG tc = 0;
+			triggers->get_Count(&tc);
+			if (tc >= 1) {
+				ComPtr<ITrigger> trigger;
+				if (SUCCEEDED(triggers->get_Item(1, &trigger))) {
+					BSTR bSb = nullptr;
+					if (SUCCEEDED(trigger->get_StartBoundary(&bSb)) && bSb) {
+						std::wstring sb(bSb);
+						SysFreeString(bSb);
+						// Format: "2025-01-01T09:00:00"
+						const auto tPos = sb.find(L'T');
+						if (tPos != std::wstring::npos && sb.size() >= tPos + 6) {
+							alarm.hour	 = std::stoi(sb.substr(tPos + 1, 2));
+							alarm.minute = std::stoi(sb.substr(tPos + 4, 2));
+						}
+					}
+					ComPtr<IWeeklyTrigger> weekly;
+					if (SUCCEEDED(trigger->QueryInterface(IID_PPV_ARGS(&weekly)))) {
+						short dow = 0;
+						weekly->get_DaysOfWeek(&dow);
+						for (int d = 0; d < 7; ++d)
+							if (dow & (1 << d))
+								alarm.repeat_days.push_back(d);
+					}
+				}
+			}
+		}
+
+		// Action → youtube_url
+		ComPtr<IActionCollection> actions;
+		if (SUCCEEDED(def->get_Actions(&actions))) {
+			LONG ac = 0;
+			actions->get_Count(&ac);
+			if (ac >= 1) {
+				ComPtr<IAction> action;
+				if (SUCCEEDED(actions->get_Item(1, &action))) {
+					ComPtr<IExecAction> exec;
+					if (SUCCEEDED(action->QueryInterface(IID_PPV_ARGS(&exec)))) {
+						BSTR bArgs = nullptr;
+						if (SUCCEEDED(exec->get_Arguments(&bArgs)) && bArgs) {
+							alarm.youtube_url = toNarrow(std::wstring(bArgs));
+							SysFreeString(bArgs);
+						}
+					}
+				}
+			}
+		}
+
+		result.push_back(std::move(alarm));
+	}
+
+	return result;
 }
 
 } // namespace alarm::controller

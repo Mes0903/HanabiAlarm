@@ -2,6 +2,7 @@
 #include "controllers/PersistenceService.h"
 #include "controllers/SchedulerService.h"
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -12,8 +13,27 @@ namespace alarm::controller {
 // ─── load ─────────────────────────────────────────────────────────────────────
 void AlarmController::load()
 {
-	alarms_		= PersistenceService::loadAlarms();
 	settings_ = PersistenceService::loadSettings();
+
+	if (std::filesystem::exists("data/alarms.json")) {
+		// JSON exists → it is the source of truth; re-sync scheduler to match.
+		alarms_ = PersistenceService::loadAlarms();
+		for (const auto &a : alarms_) {
+			if (auto res = SchedulerService::syncAlarm(a, settings_.chrome_path); !res)
+				std::cerr << "[SchedulerService] load syncAlarm: " << res.error() << '\n';
+		}
+	}
+	else {
+		// JSON missing → recover from Task Scheduler and persist.
+		if (auto scheduled = SchedulerService::loadAlarmsFromScheduler()) {
+			alarms_ = std::move(*scheduled);
+			persist_();
+		}
+		else {
+			std::cerr << "[SchedulerService] loadAlarmsFromScheduler: " << scheduled.error() << '\n';
+		}
+	}
+
 	sortAlarms_();
 }
 
@@ -36,6 +56,11 @@ void AlarmController::updateAlarm(const model::AlarmModel &alarm)
 {
 	auto it = std::ranges::find(alarms_, alarm.id, &model::AlarmModel::id);
 	if (it != alarms_.end()) {
+		// If the label changed the task name changes too, so delete the old task first.
+		if (it->label != alarm.label) {
+			if (auto res = SchedulerService::deleteTask(*it); !res)
+				std::cerr << "[SchedulerService] updateAlarm(deleteOld): " << res.error() << '\n';
+		}
 		*it = alarm;
 		if (auto res = SchedulerService::syncAlarm(alarm, settings_.chrome_path); !res)
 			std::cerr << "[SchedulerService] updateAlarm: " << res.error() << '\n';
