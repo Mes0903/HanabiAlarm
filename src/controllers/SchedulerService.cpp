@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <wrl/client.h>
 #include <iostream>
+#include <string_view>
 
 #pragma comment(lib, "taskschd.lib")
 #pragma comment(lib, "ole32.lib")
@@ -107,6 +108,59 @@ std::string hrErr(const char *op, HRESULT hr)
 	return std::format("{} failed (HRESULT 0x{:08X})", op, static_cast<uint32_t>(hr));
 }
 
+std::string trim(std::string_view s)
+{
+	const auto first = s.find_first_not_of(" \t\r\n");
+	if (first == std::string_view::npos)
+		return {};
+
+	const auto last = s.find_last_not_of(" \t\r\n");
+	return std::string(s.substr(first, last - first + 1));
+}
+
+std::string quoteCommandLineArgument(const std::string &arg)
+{
+	std::string quoted;
+	quoted.reserve(arg.size() + 2);
+	quoted.push_back('"');
+
+	for (char c : arg) {
+		if (c == '"' || c == '\\')
+			quoted.push_back('\\');
+		quoted.push_back(c);
+	}
+
+	quoted.push_back('"');
+	return quoted;
+}
+
+std::string unquoteCommandLineArgument(std::string_view arg)
+{
+	const std::string trimmed = trim(arg);
+	if (trimmed.size() < 2 || trimmed.front() != '"' || trimmed.back() != '"')
+		return trimmed;
+
+	std::string unquoted;
+	unquoted.reserve(trimmed.size() - 2);
+	bool escaped = false;
+	for (char c : std::string_view(trimmed).substr(1, trimmed.size() - 2)) {
+		if (escaped) {
+			unquoted.push_back(c);
+			escaped = false;
+		}
+		else if (c == '\\') {
+			escaped = true;
+		}
+		else {
+			unquoted.push_back(c);
+		}
+	}
+	if (escaped)
+		unquoted.push_back('\\');
+
+	return unquoted;
+}
+
 // Builds the task display name: "<label> <id>", or "unnamed <id>" when label is empty.
 std::wstring taskNameFor(const std::string &label, const std::string &id)
 {
@@ -133,6 +187,22 @@ HRESULT getOrCreateAlarmFolder(ITaskService *svc, ITaskFolder **alarmFolder)
 } // namespace
 
 namespace alarm::controller {
+
+std::string SchedulerService::buildChromeLaunchArguments(const std::string &youtubeUrl)
+{
+	return "--incognito " + quoteCommandLineArgument(youtubeUrl);
+}
+
+std::string SchedulerService::extractYoutubeUrlFromChromeArguments(const std::string &arguments)
+{
+	constexpr std::string_view incognitoFlag = "--incognito";
+
+	const std::string trimmed = trim(arguments);
+	if (!trimmed.starts_with(incognitoFlag))
+		return trimmed;
+
+	return unquoteCommandLineArgument(trimmed.substr(incognitoFlag.size()));
+}
 
 // ─── syncAlarm ────────────────────────────────────────────────────────────────
 std::expected<void, std::string> SchedulerService::syncAlarm(const model::AlarmModel &alarm,
@@ -216,7 +286,7 @@ std::expected<void, std::string> SchedulerService::syncAlarm(const model::AlarmM
 		return std::unexpected(hrErr("QueryInterface(IExecAction)", hr));
 
 	exec->put_Path(BStr(toWide(chromePath).c_str()));
-	exec->put_Arguments(BStr(toWide(alarm.youtube_url).c_str()));
+	exec->put_Arguments(BStr(toWide(buildChromeLaunchArguments(alarm.youtube_url)).c_str()));
 
 	// ── Register (create or replace) the task ──────────────────────────────────
 	BStrVar sddl(L"");
@@ -460,7 +530,7 @@ std::expected<std::vector<model::AlarmModel>, std::string> SchedulerService::loa
 					if (SUCCEEDED(action->QueryInterface(IID_PPV_ARGS(&exec)))) {
 						BSTR bArgs = nullptr;
 						if (SUCCEEDED(exec->get_Arguments(&bArgs)) && bArgs) {
-							alarm.youtube_url = toNarrow(std::wstring(bArgs));
+							alarm.youtube_url = extractYoutubeUrlFromChromeArguments(toNarrow(std::wstring(bArgs)));
 							SysFreeString(bArgs);
 						}
 					}

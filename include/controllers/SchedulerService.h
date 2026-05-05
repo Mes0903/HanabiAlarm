@@ -11,6 +11,12 @@ namespace alarm::controller {
 // All methods are static. COM init/uninit is handled internally per call.
 class SchedulerService {
 public:
+	// Builds the Chrome command-line arguments stored in the scheduled task.
+	[[nodiscard]] static std::string buildChromeLaunchArguments(const std::string &youtubeUrl);
+
+	// Extracts the YouTube URL from either current Chrome arguments or older raw-URL tasks.
+	[[nodiscard]] static std::string extractYoutubeUrlFromChromeArguments(const std::string &arguments);
+
 	// Creates or updates the Task Scheduler task for the given alarm.
 	// Task path: \HanabiAlarm\<label> <id>  (or "unnamed <id>" when label is empty)
 	// If alarm.enabled is false the task is registered but disabled.
